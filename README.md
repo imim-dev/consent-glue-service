@@ -73,6 +73,37 @@ Seed data and what the first run does:
 | erin | opted in | missing | created in email (R5) |
 | frank | missing | subscribed | flagged for review, never changed automatically |
 
+## Failure demos
+
+Both were run against the simulators, with the demo above already done once. The fault switch is
+`POST /admin/faults` on either simulator (modes `500`, `429`, `422`, `timeout`, `drop_response`).
+
+**1. The email platform is down on the first sync** (start from an empty `data/glue.db`)
+
+```
+curl -X POST localhost:8002/admin/faults -H 'Content-Type: application/json' -d '{"mode":"500","remaining":1}'
+python -m glue run-once    # status "partial", nothing planned
+python -m glue run-once    # status "ok": carol and erin fixed, frank flagged for review
+```
+
+Planning is skipped until both systems were read once. A contact that was merely not seen yet is
+therefore never created or resubscribed by mistake.
+
+**2. The write succeeds but the response is lost**
+
+```
+curl -X POST localhost:8001/contacts/1/consent -H 'Content-Type: application/json' \
+  -d '{"status":"withdrawn","effective_at":"2026-10-18T23:00:00Z","source":"preference_center"}'
+curl -X POST localhost:8002/admin/faults -H 'Content-Type: application/json' \
+  -d '{"mode":"drop_response","remaining":1,"hang_seconds":8}'
+python -m glue run-once    # timeout after about 5 s, retry scheduled (attempt 1)
+curl -X DELETE localhost:8002/admin/faults
+curl localhost:8002/subscribers/alice@example.com    # already "unsubscribed": the write was applied
+python -m glue run-once    # target already correct: nothing planned, the old operation is "superseded"
+```
+
+Result: no duplicate write and no lost update.
+
 ## Commands
 
 | Command | Purpose |
@@ -141,7 +172,7 @@ entry, not a rewrite of the rules.
 | 5xx, 408, timeout, connection error | Exponential backoff with jitter, 5 attempts, then dead-letter |
 | Other 4xx (for example 422) | No retry, dead-letter immediately |
 | 404 on delete | Treated as already done |
-| Write applied but the response lost | Safe: writes set a state, and a read-back after each write confirms it |
+| Write applied but the response lost | The call times out and a retry is scheduled. The next run reads the target, sees the state is already correct, plans nothing and marks the pending operation `superseded`. Writes set a state, so repeating one is harmless anyway (see failure demo 2) |
 | Process killed mid-run | Outbox rows survive, execution resumes on the next run |
 | 37 of 500 operations fail | The other 463 succeed, failures are listed with reasons |
 | Our own write comes back as a change | Both sides already match, so nothing is planned (no echo loop) |
@@ -206,6 +237,7 @@ The engine and executor tests use in-memory fake systems that behave like the si
 | Limitation | Fix in a sentence or two |
 |---|---|
 | **Erasure (GDPR right to erasure) is not implemented.** The consent simulator has the endpoints, the client methods and the `erasure_requests` table exist, but the engine does not process them | Create a delete operation per request, delete in email, read back, mark the request complete in the consent platform, then purge the contact's address from the local database |
+| An operation whose write succeeded but whose response was lost ends as `superseded`, not `confirmed` | On supersede, if the target already matches the desired state, record it as confirmed by observation |
 | No lock against overlapping runs | A lock row or file, idempotent operation keys already make an accidental overlap harmless |
 | No metrics endpoint, and no load measurement | Expose counters from the run stats, and measure operations per second against the simulators with 10,000 contacts |
 | Default salt for `contact_key` | Read it from a secret store |
