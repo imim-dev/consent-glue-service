@@ -83,6 +83,10 @@ class ConsentClient(BaseClient):
         self._request("POST", f"/contacts/{contact_id}/consent",
                       json={"status": status, "effective_at": to_iso(at), "source": source})
 
+    def get(self, contact_id) -> dict | None:
+        resp = self._request("GET", f"/contacts/{contact_id}")
+        return None if resp.status_code == 404 else resp.json()
+
     def pending_erasures(self) -> list[dict]:
         return self._request("GET", "/erasure-requests", params={"status": "pending"}).json()["items"]
 
