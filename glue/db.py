@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS operations (
     effective_at    TEXT,
     source          TEXT NOT NULL,
     rule            TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',   -- pending, confirmed, dead
+    status          TEXT NOT NULL DEFAULT 'pending',   -- pending, confirmed, dead, superseded
     attempts        INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TEXT NOT NULL,
     last_error      TEXT,
@@ -117,8 +117,17 @@ def set_cursor(conn, system: str, value: str) -> None:
         "ON CONFLICT(system) DO UPDATE SET value=excluded.value", (system, value))
 
 
+def make_op_key(contact_key, target, kind, status, effective_at, observed="") -> str:
+    """Idempotency key. `observed` is the target's state at planning time: if the
+    target drifts back to a state we already fixed once, the key differs and a
+    new operation is created instead of being ignored as a duplicate."""
+    at = to_iso(effective_at)
+    return hashlib.sha256(
+        f"{contact_key}|{target}|{kind}|{status}|{at}|{observed}".encode()).hexdigest()
+
+
 def enqueue_operation(conn, *, contact_key, target, kind, status, effective_at,
-                      source, rule, run_id) -> bool:
+                      source, rule, run_id, observed="") -> bool:
     """Add an operation to the outbox. Returns False if it already exists.
 
     Does not commit: the caller wraps it in `with conn:` together with the
@@ -126,8 +135,7 @@ def enqueue_operation(conn, *, contact_key, target, kind, status, effective_at,
     """
     now = to_iso(utcnow())
     at = to_iso(effective_at)
-    op_key = hashlib.sha256(
-        f"{contact_key}|{target}|{kind}|{status}|{at}".encode()).hexdigest()
+    op_key = make_op_key(contact_key, target, kind, status, effective_at, observed)
     cur = conn.execute(
         "INSERT OR IGNORE INTO operations (op_key, contact_key, target, kind, "
         "desired_status, effective_at, source, rule, next_attempt_at, run_id, "
