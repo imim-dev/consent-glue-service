@@ -8,7 +8,7 @@ Home assignment for the Forward Deployed Engineer role. **The two systems are si
 for this exercise, with switchable failures. The glue service is the deliverable.
 Customer context and value: [docs/customer-context.md](docs/customer-context.md).
 
-Tested on: Python 3.14.4 on Ubuntu 26.04 (VM). Windows: to be confirmed.
+Tested on: Python 3.14.4 on Ubuntu 26.04 (VM), and Python 3.14.8 on Windows, each time from a fresh clone, following this README.
 
 ## What it does
 
@@ -40,7 +40,7 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-If PowerShell blocks the activate script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+If PowerShell says that running scripts is disabled, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once and activate again. The prompt must start with `(.venv)`: if it does not, the environment is not active and `pip` installs into the global Python.
 
 ## Demo (three terminals, each with the virtual environment active)
 
